@@ -1,211 +1,137 @@
-// ls 명령어 구현
-int custom_ls(char **argv) {
+#include "include.h"
+#include "custom_command.h"
+
+int custom_ls(char **argv)
+{
     const char *path = argv[1] ? argv[1] : ".";
-    struct dirent *entry;
     DIR *dir = opendir(path);
-    if (dir == NULL) {
-        perror(path);
-        return 1;
-    }
+    if (!dir) { perror(path); return 1; }
 
-    // 디렉터리 내부 항목 탐색 및 출력
-    while ((entry = readdir(dir))) {
-        const char *name = entry->d_name;
-        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
-            continue;
-        fprintf(stdout, "%s\n", name);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") != 0 &&
+            strcmp(entry->d_name, "..") != 0)
+            printf("%s\n", entry->d_name);
     }
-    closedir(dir);
+    if (closedir(dir) != 0) { perror("closedir"); return 1; }
     return 0;
 }
 
-// mkdir 명령어 구현
-int custom_mkdir(char **argv) {
-    const char *dirname = argv[1];
-    if (dirname == NULL) {
-        fprintf(stderr, "생성할 디렉토리 이름을 지정해주세요\n");
-        return 1;
-    }
-    if (mkdir(dirname, 0777) == 0)
-        return 0;
-    perror("mkdir");
-    return 1;
+int custom_mkdir(char **argv)
+{
+    if (!argv[1]) { fprintf(stderr, "사용법: mkdir <디렉터리>\n"); return 1; }
+    if (mkdir(argv[1], 0777) == 0) return 0;
+    perror("mkdir"); return 1;
 }
 
-// rmdir 명령어 구현
-int custom_rmdir(char **argv) {
-    const char *dirname = argv[1];
-    if (dirname == NULL) {
-        fprintf(stderr, "삭제할 디렉토리 이름을 지정해주세요\n");
-        return 1;
-    }
-    if (rmdir(dirname) == 0)
-        return 0;
-    perror("rmdir");
-    return 1;
+int custom_rmdir(char **argv)
+{
+    if (!argv[1]) { fprintf(stderr, "사용법: rmdir <디렉터리>\n"); return 1; }
+    if (rmdir(argv[1]) == 0) return 0;
+    perror("rmdir"); return 1;
 }
 
-// ln 명령어 구현
-int custom_ln(char **argv) {
-    const char *original = argv[1];
-    const char *new_link = argv[2];
-    if (original == NULL || new_link == NULL) {
-        fprintf(stderr, "원본 파일과 링크 파일 이름을 확인해주세요\n");
-        return 1;
+int custom_ln(char **argv)
+{
+    if (!argv[1] || !argv[2]) {
+        fprintf(stderr, "사용법: ln <원본> <링크>\n"); return 1;
     }
-
-    // 하드링크 생성 결과 확인
-    int result = link(original, new_link);
-    if (result == 0) {
-        return 0;
-    }
-    perror("ln");
-    return 1;
+    if (link(argv[1], argv[2]) == 0) return 0;
+    perror("ln"); return 1;
 }
 
-// cp 명령어 구현
-int custom_cp(char **argv) {
-    const char *source = argv[1];
-    const char *destination = argv[2];
-    if (!source || !destination) {
-        fprintf(stderr, "원본 파일과 복사할 파일의 이름을 확인해주세요\n");
-        return 1;
+int custom_cp(char **argv)
+{
+    if (!argv[1] || !argv[2]) {
+        fprintf(stderr, "사용법: cp <원본> <대상>\n"); return 1;
+    }
+    if (strcmp(argv[1], argv[2]) == 0) {
+        fprintf(stderr, "cp: 원본과 대상이 같습니다.\n"); return 1;
     }
 
-    FILE *input = fopen(source, "rb");
-    if (!input) {
-        perror("원본");
-        return 1;
-    }
-
-    FILE *output = fopen(destination, "wb");
-    if (output == NULL) {
-        perror("복사본");
-        fclose(input);
-        return 1;
-    }
+    FILE *in = fopen(argv[1], "rb");
+    if (!in) { perror(argv[1]); return 1; }
+    FILE *out = fopen(argv[2], "wb");
+    if (!out) { perror(argv[2]); fclose(in); return 1; }
 
     char buffer[4096];
-    size_t size;
-    // 원본 데이터를 읽어 대상 파일에 기록
-    while ((size = fread(buffer, 1, sizeof(buffer), input)) != 0) {
-        if (fwrite(buffer, 1, size, output) != size) {
-            perror("cp");
-            fclose(input);
-            fclose(output);
-            return 1;
-        }
+    size_t n;
+    int failed = 0;
+    while ((n = fread(buffer, 1, sizeof(buffer), in)) > 0) {
+        if (fwrite(buffer, 1, n, out) != n) { perror("cp"); failed = 1; break; }
     }
-
-    // 파일 읽기 오류 확인
-    if (ferror(input)) {
-        perror("cp");
-        fclose(input);
-        fclose(output);
-        return 1;
-    }
-
-    fclose(input);
-    fclose(output);
-    return 0;
+    if (ferror(in)) { perror("cp: 읽기"); failed = 1; }
+    if (fclose(in) != 0) { perror("cp: 입력 닫기"); failed = 1; }
+    if (fclose(out) != 0) { perror("cp: 출력 닫기"); failed = 1; }
+    return failed ? 1 : 0;
 }
 
-// rm 명령어 구현
-int custom_rm(char **argv) {
-    const char *target = argv[1];
-    if (target == NULL) {
-        fprintf(stderr, "삭제할 파일 이름을 입력하세요.\n");
-        return 1;
-    }
-
-    // 지정된 파일 제거
-    int result = unlink(target);
-    if (result == 0) {
-        return 0;
-    }
-    perror("rm");
-    return 1;
+int custom_rm(char **argv)
+{
+    if (!argv[1]) { fprintf(stderr, "사용법: rm <파일>\n"); return 1; }
+    if (unlink(argv[1]) == 0) return 0;
+    perror("rm"); return 1;
 }
 
-// mv 명령어 구현
-int custom_mv(char **argv) {
-    if (!argv || !argv[1] || !argv[2]) {
-        fprintf(stderr, "사용법: mv <원본파일> <새파일>\n");
-        return EXIT_FAILURE;
+int custom_mv(char **argv)
+{
+    if (!argv[1] || !argv[2]) {
+        fprintf(stderr, "사용법: mv <원본> <대상>\n"); return 1;
     }
-
-    const char *old_name = argv[1];
-    const char *new_name = argv[2];
-
-    // 파일 이름 변경 및 경로 이동
-    int result = rename(old_name, new_name);
-    if (result != 0) {
-        perror("mv");
-        return EXIT_FAILURE;
-    }
-    return EXIT_SUCCESS;
+    if (rename(argv[1], argv[2]) == 0) return 0;
+    perror("mv"); return 1;
 }
 
-// cat 명령어 구현
-int custom_cat(char **argv) {
-    FILE *fp;
-    int use_stdin = (argv[1] == NULL);
-
-    // 입력 대상 결정
-    if (use_stdin) {
-        fp = stdin;
-    } else {
-        fp = fopen(argv[1], "r");
-        if (!fp) {
-            perror("cat");
-            return 1;
-        }
-    }
+int custom_cat(char **argv)
+{
+    FILE *fp = argv[1] ? fopen(argv[1], "r") : stdin;
+    if (!fp) { perror("cat"); return 1; }
 
     char buffer[4096];
-    // 입력 내용을 표준 출력으로 전달
-    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
+    while (fgets(buffer, sizeof(buffer), fp))
         fputs(buffer, stdout);
-    }
 
-    // 파일 입력인 경우에만 스트림 종료
-    if (!use_stdin) {
-        fclose(fp);
-    }
+    int failed = ferror(fp);
+    if (argv[1] && fclose(fp) != 0) failed = 1;
+    if (failed) { perror("cat"); return 1; }
     return 0;
 }
 
-// grep 명령어 구현
-int custom_grep(char **argv) {
-    if (argv[1] == NULL) {
-        fprintf(stderr, "사용법: grep <검색어> [파일]\n");
-        return 1;
+int custom_grep(char **argv)
+{
+    if (!argv[1]) {
+        fprintf(stderr, "사용법: grep <검색어> [파일]\n"); return 1;
     }
-
-    const char *keyword = argv[1];
-    FILE *fp = stdin;
-    int close_file = 0;
-
-    // 검색 대상 파일 확인
-    if (argv[2] != NULL) {
-        fp = fopen(argv[2], "r");
-        if (fp == NULL) {
-            perror("grep");
-            return 1;
-        }
-        close_file = 1;
-    }
+    FILE *fp = argv[2] ? fopen(argv[2], "r") : stdin;
+    if (!fp) { perror("grep"); return 1; }
 
     char line[4096];
-    // 검색어가 포함된 행만 출력
+    int matched = 0;
     while (fgets(line, sizeof(line), fp)) {
-        if (strstr(line, keyword)) {
+        if (strstr(line, argv[1])) {
             fputs(line, stdout);
+            matched = 1;
         }
     }
+    int failed = ferror(fp);
+    if (argv[2] && fclose(fp) != 0) failed = 1;
+    if (failed) { perror("grep"); return 2; }
+    return matched ? 0 : 1;
+}
 
-    // 직접 열었던 파일만 닫기
-    if (close_file)
-        fclose(fp);
-    return 0;
+int custom_command(char **argv)
+{
+    if (!argv || !argv[0]) return 0;
+
+    if (strcmp(argv[0], "ls") == 0) return custom_ls(argv);
+    if (strcmp(argv[0], "mkdir") == 0) return custom_mkdir(argv);
+    if (strcmp(argv[0], "rmdir") == 0) return custom_rmdir(argv);
+    if (strcmp(argv[0], "ln") == 0) return custom_ln(argv);
+    if (strcmp(argv[0], "cp") == 0) return custom_cp(argv);
+    if (strcmp(argv[0], "rm") == 0) return custom_rm(argv);
+    if (strcmp(argv[0], "mv") == 0) return custom_mv(argv);
+    if (strcmp(argv[0], "cat") == 0) return custom_cat(argv);
+    if (strcmp(argv[0], "grep") == 0) return custom_grep(argv);
+
+    return -1;
 }
