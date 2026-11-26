@@ -4,218 +4,198 @@
 #include "custom_command.h"
 #include "signal_func.h"
 
-int handle_redirection(char **argv)
+// 명령어 실행 및 프로세스 관리
+void execute_command(char **argv, int background)
 {
-    int in_fd = -1, out_fd = -1;
-    int read_index = 0, write_index = 0;
+    char **cmd_argv[MAX_PIPES + 1];
+    int cmd_count = split_commands_by_pipe(argv, cmd_argv);
 
-    while (argv[read_index] != NULL) {
-        char *token = argv[read_index];
+    if (cmd_count == -1)
+        return;
 
-        if (strcmp(token, "<") == 0 ||
-            strcmp(token, ">") == 0 ||
-            strcmp(token, ">>") == 0) {
-            int is_input = (strcmp(token, "<") == 0);
-            int append = (strcmp(token, ">>") == 0);
-            char *filename = argv[read_index + 1];
-
-            if (filename == NULL || filename[0] == '\0') {
-                fprintf(stderr, "myshell: 리다이렉션 파일명이 없습니다.\n");
-                if (in_fd >= 0) close(in_fd);
-                if (out_fd >= 0) close(out_fd);
-                return -1;
-            }
-
-            int fd;
-            if (is_input)
-                fd = open(filename, O_RDONLY);
-            else
-                fd = open(filename, O_WRONLY | O_CREAT |
-                          (append ? O_APPEND : O_TRUNC), 0666);
-
-            if (fd < 0) {
-                perror(filename);
-                if (in_fd >= 0) close(in_fd);
-                if (out_fd >= 0) close(out_fd);
-                return -1;
-            }
-
-            if (is_input) {
-                if (in_fd >= 0) close(in_fd);
-                in_fd = fd;
-            } else {
-                if (out_fd >= 0) close(out_fd);
-                out_fd = fd;
-            }
-            read_index += 2;
-        } else {
-            argv[write_index++] = argv[read_index++];
-        }
+    // 파이프 명령어 실행
+    if (cmd_count > 1) {
+        execute_pipe_loop(cmd_argv, cmd_count, background);
+        return;
     }
-    argv[write_index] = NULL;
 
-    if (in_fd >= 0) {
-        if (dup2(in_fd, STDIN_FILENO) < 0) {
-            perror("dup2");
-            close(in_fd);
-            if (out_fd >= 0) close(out_fd);
-            return -1;
-        }
-        close(in_fd);
+    pid_t pid = fork();
+    int status;
+
+    if (pid < 0) {
+        perror("fork");
+        return;
     }
-    if (out_fd >= 0) {
-        if (dup2(out_fd, STDOUT_FILENO) < 0) {
-            perror("dup2");
-            close(out_fd);
-            return -1;
+
+    // 자식 프로세스 실행
+    if (pid == 0) {
+        setup_child_signals();
+
+        int argc_dummy = 0;
+        if (handle_redirection(argv, &argc_dummy) == -1)
+            exit(EXIT_FAILURE);
+
+        // 명령어 처리
+        if (custom_command(argv) == -1) {
+            execvp(argv[0], argv);
+            perror(argv[0]);
+            exit(EXIT_FAILURE);
         }
-        close(out_fd);
+
+        exit(EXIT_SUCCESS);
     }
-    return 0;
+
+    // 부모 프로세스 실행
+    if (background == 1) {
+        printf("[%d] %s (백그라운드 실행)\n", pid, argv[0]);
+    } else {
+        pid_t result;
+
+        do {
+            result = waitpid(pid, &status, WUNTRACED);
+        } while (result == -1 && errno == EINTR);
+    }
 }
 
-int split_commands_by_pipe(char **argv, char ***commands)
+// 파이프라인 명령어 실행
+int execute_pipe_loop(char ***cmd_argv, int cmd_count, int background)
 {
-    int count = 0;
-    if (argv == NULL || argv[0] == NULL)
-        return -1;
-
-    commands[count++] = argv;
-    for (int i = 0; argv[i] != NULL; ++i) {
-        if (strcmp(argv[i], "|") != 0)
-            continue;
-
-        if (i == 0 || argv[i + 1] == NULL ||
-            strcmp(argv[i + 1], "|") == 0 || count > MAX_PIPES) {
-            fprintf(stderr, "myshell: 잘못된 파이프 명령입니다.\n");
-            return -1;
-        }
-        argv[i] = NULL;
-        commands[count++] = &argv[i + 1];
-    }
-    return count;
-}
-
-static int run_one_command(char **argv)
-{
-    if (argv[0] == NULL)
-        return 0;
-
-    if (handle_redirection(argv) < 0)
-        return -1;
-
-    int result = custom_command(argv);
-    if (result == -1) {
-        execvp(argv[0], argv);
-        perror(argv[0]);
-        return -1;
-    }
-    return result;
-}
-
-int execute_pipe_loop(char ***commands, int command_count, int background)
-{
-    int previous_read = STDIN_FILENO;
+    int pipe_fds[2];
+    int input_fd = STDIN_FILENO;
     pid_t pids[MAX_PIPES + 1];
-    int started = 0;
+    int current_pids_count = 0;
 
-    for (int i = 0; i < command_count; ++i) {
-        int pipe_fd[2] = {-1, -1};
-        int has_next = (i < command_count - 1);
+    for (int i = 0; i < cmd_count; i++) {
+        char **current_cmd = cmd_argv[i];
+        int has_next = (i < cmd_count - 1);
 
-        if (has_next && pipe(pipe_fd) < 0) {
+        // 다음 명령어가 있을 때 파이프 생성
+        if (has_next && pipe(pipe_fds) == -1) {
             perror("pipe");
-            if (previous_read != STDIN_FILENO) close(previous_read);
+            if (input_fd != STDIN_FILENO)
+                close(input_fd);
+            cleanup_and_exit(pids, current_pids_count, EXIT_FAILURE);
             return -1;
         }
 
         pid_t pid = fork();
+
         if (pid < 0) {
             perror("fork");
-            if (previous_read != STDIN_FILENO) close(previous_read);
-            if (pipe_fd[0] >= 0) close(pipe_fd[0]);
-            if (pipe_fd[1] >= 0) close(pipe_fd[1]);
-            for (int j = 0; j < started; ++j) kill(pids[j], SIGTERM);
-            for (int j = 0; j < started; ++j) waitpid(pids[j], NULL, 0);
+            if (input_fd != STDIN_FILENO)
+                close(input_fd);
+            if (has_next) {
+                close(pipe_fds[0]);
+                close(pipe_fds[1]);
+            }
+            cleanup_and_exit(pids, current_pids_count, EXIT_FAILURE);
             return -1;
         }
 
+        // 자식 프로세스
         if (pid == 0) {
             setup_child_signals();
 
-            if (previous_read != STDIN_FILENO) {
-                if (dup2(previous_read, STDIN_FILENO) < 0) {
-                    perror("dup2");
-                    _exit(EXIT_FAILURE);
-                }
-                close(previous_read);
+            if (input_fd != STDIN_FILENO) {
+                dup2(input_fd, STDIN_FILENO);
+                close(input_fd);
             }
+
             if (has_next) {
-                close(pipe_fd[0]);
-                if (dup2(pipe_fd[1], STDOUT_FILENO) < 0) {
-                    perror("dup2");
-                    _exit(EXIT_FAILURE);
-                }
-                close(pipe_fd[1]);
+                dup2(pipe_fds[1], STDOUT_FILENO);
+                close(pipe_fds[0]);
+                close(pipe_fds[1]);
             }
 
-            int result = run_one_command(commands[i]);
-            fflush(NULL);
-            _exit(result == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+            int argc_dummy = 0;
+            if (handle_redirection(current_cmd, &argc_dummy) == -1)
+                exit(EXIT_FAILURE);
+
+            // 현재 명령어 실행
+            if (custom_command(current_cmd) == -1) {
+                execvp(current_cmd[0], current_cmd);
+                perror(current_cmd[0]);
+                exit(EXIT_FAILURE);
+            }
+
+            exit(EXIT_SUCCESS);
         }
 
-        pids[started++] = pid;
-        if (previous_read != STDIN_FILENO)
-            close(previous_read);
+        // 부모 프로세스
+        pids[current_pids_count++] = pid;
+
+        if (input_fd != STDIN_FILENO)
+            close(input_fd);
+
         if (has_next) {
-            close(pipe_fd[1]);
-            previous_read = pipe_fd[0];
+            input_fd = pipe_fds[0];
+            close(pipe_fds[1]);
         }
     }
 
-    if (background) {
-        printf("[%d] 파이프라인 (백그라운드 실행)\n", (int)pids[0]);
-    } else {
-        for (int i = 0; i < started; ++i) {
+    // 포그라운드 실행 시 자식 프로세스 대기
+    if (background == 0) {
+        for (int i = 0; i < current_pids_count; i++) {
             int status;
-            while (waitpid(pids[i], &status, 0) < 0 && errno == EINTR) {}
+            waitpid(pids[i], &status, 0);
         }
+    } else {
+        printf("[%d] 파이프라인 (백그라운드 실행)\n", pids[0]);
     }
+
     return 0;
 }
 
-int execute_command(char **argv, int background)
+// 파이프 연산자를 기준으로 명령어 분리
+int split_commands_by_pipe(char **argv, char ***commands)
 {
-    char **commands[MAX_PIPES + 1];
-    int count = split_commands_by_pipe(argv, commands);
-    if (count < 0)
+    int cmd_count = 0;
+    int argc = 0;
+
+    if (argv == NULL || argv[0] == NULL)
         return -1;
 
-    if (count > 1)
-        return execute_pipe_loop(commands, count, background);
+    while (argv[argc] != NULL)
+        argc++;
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror("fork");
-        return -1;
+    commands[cmd_count++] = argv;
+
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "|") != 0)
+            continue;
+
+        if (i == 0 || i + 1 >= argc ||
+            strcmp(argv[i + 1], "|") == 0 ||
+            cmd_count >= MAX_PIPES + 1) {
+            fprintf(stderr, "myshell: 잘못된 파이프 명령입니다.\n");
+            return -1;
+        }
+
+        argv[i] = NULL;
+        commands[cmd_count++] = &argv[i + 1];
     }
 
-    if (pid == 0) {
-        setup_child_signals();
-        int result = run_one_command(argv);
-        fflush(NULL);
-        _exit(result == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+    return cmd_count;
+}
+
+// 파이프라인 오류 발생 시 자식 프로세스 정리
+void cleanup_and_exit(pid_t *pids, int count, int exit_code)
+{
+    fprintf(stderr, "myshell: 파이프라인 오류 발생. 자식 프로세스 정리 중...\n");
+
+    for (int i = 0; i < count; i++) {
+        if (pids[i] > 0)
+            kill(pids[i], SIGTERM);
     }
 
-    if (background) {
-        printf("[%d] %s (백그라운드 실행)\n", (int)pid, argv[0]);
-    } else {
-        int status;
-        while (waitpid(pid, &status, 0) < 0) {
-            if (errno == EINTR) continue;
-            perror("waitpid");
-            break;
+    int status;
+
+    for (int i = 0; i < count; i++) {
+        if (pids[i] > 0) {
+            while (waitpid(pids[i], &status, 0) == -1 && errno == EINTR)
+                continue;
         }
     }
-    return 0;
+
+    exit(exit_code);
 }
