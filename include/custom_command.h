@@ -1,11 +1,15 @@
-#ifndef COMMAND_FUNC_H
-#define COMMAND_FUNC_H
+#ifndef CUSTOM_COMMAND_H
+#define CUSTOM_COMMAND_H
 
-#include "include.h"
-
-int execute_command(char **argv, int background);
-int split_commands_by_pipe(char **argv, char ***commands);
-int execute_pipe_loop(char ***commands, int command_count, int background);
-int handle_redirection(char **argv);
+int custom_command(char **argv);
+int custom_ls(char **argv);
+int custom_mkdir(char **argv);
+int custom_rmdir(char **argv);
+int custom_ln(char **argv);
+int custom_cp(char **argv);
+int custom_rm(char **argv);
+int custom_mv(char **argv);
+int custom_cat(char **argv);
+int custom_grep(char **argv);
 
 #endif
