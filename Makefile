@@ -1,12 +1,10 @@
-
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -Iinclude
 TARGET = bin/main
-
-SRC = src/main.c src/command_func.c \
-      src/custom_command.c src/signal_func.c
-
+SRC = src/main.c src/command_func.c src/custom_command.c src/signal_func.c
 OBJ = $(SRC:src/%.c=build/src/%.o)
+
+.PHONY: all clean
 
 all: $(TARGET)
 
