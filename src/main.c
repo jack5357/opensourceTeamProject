@@ -3,24 +3,6 @@
 #include "command_func.h"
 #include "signal_func.h"
 
-static int parse_line(char *line, char **argv)
-{
-    int argc = 0;
-    char *saveptr = NULL;
-    char *token = strtok_r(line, " \t\r\n", &saveptr);
-
-    while (token != NULL) {
-        if (argc >= MAX_ARGS - 1) {
-            fprintf(stderr, "myshell: 인자가 너무 많습니다.\n");
-            return -1;
-        }
-        argv[argc++] = token;
-        token = strtok_r(NULL, " \t\r\n", &saveptr);
-    }
-    argv[argc] = NULL;
-    return argc;
-}
-
 int main(void)
 {
     char line[SHELL_INPUT_SIZE];
@@ -31,56 +13,55 @@ int main(void)
     while (1) {
         reap_background_processes();
 
-        char cwd[PATH_MAX];
-        if (getcwd(cwd, sizeof(cwd)) != NULL)
-            printf("%s$ ", cwd);
-        else
-            printf("myshell$ ");
+        printf("myshell> ");
         fflush(stdout);
 
-        if (fgets(line, sizeof(line), stdin) == NULL) {
-            if (feof(stdin)) {
-                putchar('\n');
-                break;
-            }
-            if (errno == EINTR) {
-                clearerr(stdin);
-                putchar('\n');
-                continue;
-            }
-            perror("fgets");
-            continue;
+        if (fgets(line, sizeof(line), stdin) == NULL)
+            break;
+
+        int argc = 0;
+        char *token = strtok(line, " \t\n");
+
+        while (token != NULL && argc < MAX_ARGS - 1) {
+            argv[argc++] = token;
+            token = strtok(NULL, " \t\n");
         }
+        argv[argc] = NULL;
 
-        int argc = parse_line(line, argv);
-        if (argc <= 0)
+        if (argc == 0)
             continue;
 
+        // exit 및 cd 명령어 처리
         if (strcmp(argv[0], "exit") == 0) {
             printf("쉘을 종료합니다.\n");
             break;
         }
+        else if (strcmp(argv[0], "cd") == 0) {
+            char *target_path = getenv("HOME");
 
-        if (strcmp(argv[0], "cd") == 0) {
-            const char *target = (argc > 1) ? argv[1] : getenv("HOME");
-            if (target == NULL) {
-                fprintf(stderr, "myshell: HOME 환경변수가 설정되지 않았습니다.\n");
-            } else if (chdir(target) != 0) {
-                perror("cd");
-            }
+            if (argc > 1)
+                target_path = argv[1];
+
+            if (target_path != NULL && chdir(target_path) != 0)
+                perror("chdir");
+
             continue;
         }
 
-        int background = 0;
-        if (argc > 0 && strcmp(argv[argc - 1], "&") == 0) {
-            background = 1;
+        // 백그라운드 명령어 판별
+        int run_background = 0;
+
+        if (argc > 0 && !strcmp(argv[argc - 1], "&")) {
+            run_background = 1;
             argv[--argc] = NULL;
         }
+
+        // 명령어 실행 처리
         if (argc == 0)
             continue;
 
-        execute_command(argv, background);
+        execute_command(argv, run_background);
     }
 
-    return EXIT_SUCCESS;
+    return 0;
 }
