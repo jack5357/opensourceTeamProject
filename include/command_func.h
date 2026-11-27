@@ -1,14 +1,15 @@
 
+#ifndef COMMAND_FUNC_H
+#define COMMAND_FUNC_H
+
+#include <sys/types.h>
+
 void execute_command(char **argv, int background);
 
-int custom_command(char **argv);
-int custom_ls(char **argv);
-int custom_mkdir(char **argv);
-int custom_rmdir(char **argv);
-int custom_ln(char **argv);
-int custom_cp(char **argv);
-int custom_rm(char **argv);
-int custom_mv(char **argv);
-int custom_cat(char **argv);
-int custom_grep(char **argv);
-int custom_pwd(char **argv);
+int split_commands_by_pipe(char **argv, char ***commands);
+int execute_pipe_loop(char ***cmd_argv, int cmd_count, int background);
+void cleanup_and_exit(pid_t *pids, int count, int exit_code);
+
+int handle_redirection(char **argv, int *argc);
+
+#endif
