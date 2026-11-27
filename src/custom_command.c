@@ -65,6 +65,18 @@ int custom_cp(char **argv) {
         fprintf(stderr, "원본 파일과 복사할 파일의 이름을 확인해주세요\n");
         return 1;
     }
+    struct stat source_stat;
+    struct stat destination_stat;
+
+    if (stat(source, &source_stat) == 0 &&
+        stat(destination, &destination_stat) == 0) {
+
+        if (source_stat.st_dev == destination_stat.st_dev &&
+            source_stat.st_ino == destination_stat.st_ino) {
+            fprintf(stderr, "원본과 복사 대상이 같은 파일입니다.\n");
+            return 1;
+        }
+}
 
     FILE *input = fopen(source, "rb");
     if (input == NULL) {
