@@ -108,9 +108,14 @@ int custom_cp(char **argv) {
         result = 1;
     }
 
-    if (fclose(input) != 0 || fclose(output) != 0) {
-        perror("cp");
-        result = 1;
+    if (fclose(input) != 0) {
+    perror("cp");
+    result = 1;
+    }
+
+    if (fclose(output) != 0) {
+    perror("cp");
+    result = 1;
     }
 
     return result;
