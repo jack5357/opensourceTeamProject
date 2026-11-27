@@ -1,3 +1,4 @@
+
 #ifndef CUSTOM_COMMAND_H
 #define CUSTOM_COMMAND_H
 
@@ -11,5 +12,6 @@ int custom_rm(char **argv);
 int custom_mv(char **argv);
 int custom_cat(char **argv);
 int custom_grep(char **argv);
+int custom_pwd(char **argv);
 
 #endif
